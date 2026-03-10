@@ -1,7 +1,24 @@
 import os
+import sys
+import logging
 import asyncio
 from flask import Flask, request, jsonify
 from dotenv import load_dotenv
+
+# gunicorn のロガーに相乗りしてログを出力する
+# （--capture-output が効かない環境でも確実にログストリームに流れる）
+gunicorn_logger = logging.getLogger("gunicorn.error")
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+# gunicorn 経由の場合はそのハンドラを使う
+if gunicorn_logger.handlers:
+    logger.handlers = gunicorn_logger.handlers
+    logger.setLevel(gunicorn_logger.level)
 
 from botbuilder.core import (
     BotFrameworkAdapter,
@@ -77,6 +94,8 @@ def index():
 def health():
     return jsonify({"status": "healthy"})
 
+import threading
+
 @app.route("/api/messages", methods=["POST"])
 def messages():
     """Bot Frameworkからのメッセージを処理"""
@@ -85,53 +104,45 @@ def messages():
     content_type = request.headers.get("Content-Type", "").lower()
     
     if "application/json" not in content_type:
-        print(f"⚠️ Unsupported Content-Type: {content_type}")
-        print(f"📋 Headers: {dict(request.headers)}")
-        return jsonify(
-            {"error": "Content-Type must be application/json"}
-        ), 415
+        logger.warning(f"⚠️ Unsupported Content-Type: {content_type}")
+        return jsonify({"error": "Content-Type must be application/json"}), 415
 
     # JSON を安全に取得
     try:
         body = request.get_json(force=True)
-        print(f"📨 受信メッセージ: type={body.get('type')}, from={body.get('from', {}).get('id', 'unknown')}")
+        logger.info(f"📨 受信メッセージ: type={body.get('type')}, from={body.get('from', {}).get('id', 'unknown')}")
     except Exception as e:
-        print(f"❌ JSON解析エラー: {e}")
+        logger.error(f"❌ JSON解析エラー: {e}")
         return jsonify({"error": "Invalid JSON"}), 400
 
     # Activity オブジェクトに変換
     try:
         activity = Activity().deserialize(body)
     except Exception as e:
-        print(f"❌ Activity変換エラー: {e}")
+        logger.error(f"❌ Activity変換エラー: {e}")
         return jsonify({"error": "Invalid Activity"}), 400
 
     auth_header = request.headers.get("Authorization", "")
 
-    # Bot処理を実行
-    try:
-        coro = adapter.process_activity(
-            activity,
-            auth_header,
-            bot.on_turn
-        )
+    # Slack は 3秒以内にレスポンスがないと再送するため、
+    # 処理をバックグラウンドスレッドで実行して即座に 200 を返す
+    def process_in_background():
+        try:
+            coro = adapter.process_activity(activity, auth_header, bot.on_turn)
+            if event_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(coro, event_loop)
+                future.result(timeout=30)
+            else:
+                event_loop.run_until_complete(coro)
+            logger.info("✅ メッセージ処理完了")
+        except Exception as e:
+            logger.error(f"❌ 処理中エラー: {e}")
+            import traceback
+            traceback.print_exc()
 
-        # gunicorn 対応の安全な実行
-        if event_loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(coro, event_loop)
-            future.result(timeout=30)  # タイムアウト設定
-        else:
-            event_loop.run_until_complete(coro)
-        
-        print("✅ メッセージ処理完了")
+    threading.Thread(target=process_in_background, daemon=True).start()
 
-    except Exception as e:
-        print("❌ 処理中エラー:", e)
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": "Internal Server Error"}), 500
-
-    # Bot Frameworkは空のレスポンスを期待
+    # Slack に即座に 200 を返す（再送防止）
     return "", 200
 
 

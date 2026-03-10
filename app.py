@@ -21,10 +21,10 @@ app = Flask(__name__)
 # =========================
 # Bot Framework 設定
 # =========================
-app_id = os.getenv("MicrosoftAppId") or os.getenv("MICROSOFT_APP_ID")
-app_password = os.getenv("MicrosoftAppPassword") or os.getenv("MICROSOFT_APP_PASSWORD")
-app_tenant_id = os.getenv("MicrosoftAppTenantId") or "common"
-app_type = os.getenv("MicrosoftAppType") or "MultiTenant"
+app_id = os.getenv("MICROSOFT_APP_ID")
+app_password = os.getenv("MICROSOFT_APP_PASSWORD")
+app_tenant_id = os.getenv("MicrosoftAppTenantId")
+app_type = os.getenv("MicrosoftAppType")
 
 if not app_id or not app_password:
     print("⚠️ Bot Framework 認証情報が未設定")

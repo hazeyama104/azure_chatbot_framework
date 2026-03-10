@@ -22,7 +22,7 @@ class IcebreakerBot(ActivityHandler):
         if self.client is None:
             from openai import AzureOpenAI
 
-            # 環境変数の読み込み（App Service の「構成」と一致させる）
+            # 環境変数の読み込み
             api_key = os.getenv("AZURE_OPENAI_API_KEY")
             api_version = os.getenv("AZURE_OPENAI_API_VERSION")
             endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -42,24 +42,32 @@ class IcebreakerBot(ActivityHandler):
 
         # ボット自身のメッセージは無視
         if turn_context.activity.from_property.id == turn_context.activity.recipient.id:
+            print("⚠️ ボット自身のメッセージをスキップ")
             return
 
         # 重複チェック（Bot Service からの再送対策）
         activity_id = turn_context.activity.id
         if activity_id and activity_id in self.processed_activities:
+            print(f"⚠️ 重複メッセージをスキップ: ID={activity_id}")
             return
+        
         if activity_id:
             self.processed_activities.add(activity_id)
+            print(f"✅ 新規メッセージを処理: ID={activity_id}")
 
         # 古い履歴を削除
         if len(self.processed_activities) > 1000:
             self.processed_activities.clear()
+            print("🔄 処理済みアクティビティIDをクリア")
 
         user_message = (turn_context.activity.text or "").strip()
         conversation_id = turn_context.activity.conversation.id
 
         if not user_message:
+            print("⚠️ 空のメッセージを受信")
             return
+
+        print(f"📨 受信メッセージ: '{user_message[:50]}...' (会話ID: {conversation_id})")
 
         # 会話履歴の初期化
         if conversation_id not in self.conversation_history:
@@ -67,18 +75,22 @@ class IcebreakerBot(ActivityHandler):
 
         # コマンド処理
         if user_message.lower() in ["help", "ヘルプ", "使い方"]:
+            print("📖 ヘルプコマンド実行")
             await self.send_help_message(turn_context)
             return
 
         if user_message.lower() in ["今日の質問", "アイスブレイク"]:
+            print("🎯 今日の質問コマンド実行")
             await self.send_daily_question(turn_context)
             return
 
         if user_message.lower().startswith("ゲーム"):
+            print("🎮 ゲーム提案コマンド実行")
             await self.send_game_suggestion(turn_context, user_message)
             return
 
         # 通常の会話（LLM による応答）
+        print("💬 通常会話モード")
         await self.handle_conversation(turn_context, user_message, conversation_id)
 
     async def on_members_added_activity(
@@ -87,6 +99,7 @@ class IcebreakerBot(ActivityHandler):
         """新しいメンバーが追加されたときの処理"""
         for member in members_added:
             if member.id != turn_context.activity.recipient.id:
+                print(f"👋 新しいメンバーを歓迎: {member.name}")
                 welcome_text = (
                     "👋 こんにちは！コミュニケーション活性化Botです！\n\n"
                     "チームのアイスブレイクをお手伝いします。\n"
@@ -102,6 +115,7 @@ class IcebreakerBot(ActivityHandler):
             "• その他、自由に話しかけてみてください！"
         )
         await turn_context.send_activity(help_text)
+        print("✅ ヘルプメッセージ送信完了")
 
     async def send_daily_question(self, turn_context: TurnContext):
         today = datetime.now().strftime("%Y-%m-%d")
@@ -130,8 +144,10 @@ class IcebreakerBot(ActivityHandler):
             await turn_context.send_activity(
                 f"🎯 **今日のアイスブレイク質問**\n\n{question}"
             )
+            print("✅ 今日の質問送信完了")
 
         except Exception as e:
+            print(f"❌ OpenAI エラー: {e}")
             await turn_context.send_activity(f"OpenAI エラーが発生しました: {str(e)}")
 
     async def send_game_suggestion(self, turn_context: TurnContext, message: str):
@@ -145,6 +161,8 @@ class IcebreakerBot(ActivityHandler):
                     break
         except Exception:
             participants = 5
+
+        print(f"🎮 ゲーム提案: {participants}人用")
 
         try:
             client = self.get_client()
@@ -170,8 +188,10 @@ class IcebreakerBot(ActivityHandler):
             await turn_context.send_activity(
                 f"🎮 **{participants}人用ゲーム**\n\n{game}"
             )
+            print("✅ ゲーム提案送信完了")
 
         except Exception as e:
+            print(f"❌ OpenAI エラー: {e}")
             await turn_context.send_activity(f"OpenAI エラーが発生しました: {str(e)}")
 
     async def handle_conversation(
@@ -214,8 +234,10 @@ class IcebreakerBot(ActivityHandler):
             )
 
             await turn_context.send_activity(bot_response)
+            print("✅ 会話応答送信完了")
 
         except Exception as e:
+            print(f"❌ OpenAI エラー: {e}")
             await turn_context.send_activity(
                 f"申し訳ございません。AIの応答中にエラーが発生しました: {str(e)}"
             )
